@@ -18,6 +18,10 @@
 
 ---
 
+<p align="center">
+  <img src="docs/images/screenshot.png" alt="Agentic SEO Agent — Chat interface with Quick Actions, model selector, and site profile" width="800" />
+</p>
+
 Most SEO tools charge $100+/mo to show you dashboards you'll never act on.
 
 Agentic SEO is an AI agent that connects to your real Google Search Console data, crawls your actual site content, and tells you exactly what to do next. Not a dashboard. Not a brief generator. An agent that investigates your data, cross-references it with your content, and gives you specific recommendations backed by numbers.
