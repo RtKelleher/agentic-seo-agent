@@ -5,15 +5,22 @@ import { readJSON } from '@/lib/store'
 import type { AppConfig, CrawledPage, ChatMessage } from '@/lib/types'
 
 export async function POST() {
+  const t0 = Date.now()
+  const log = (step: string, detail?: string) =>
+    console.log(`[writing-style] ${step}${detail ? ` — ${detail}` : ''} (${Date.now() - t0}ms)`)
+
   try {
+    log('start')
     const projectId = await getActiveProjectId()
     const config = await readJSON<AppConfig>('config.json')
+    log('config loaded', `project=${projectId}, provider=${config.provider.type}/${config.provider.model}`)
 
     // Load crawled pages
     let pages: CrawledPage[] = []
     try {
       pages = await readProjectJSON<CrawledPage[]>(projectId, 'site-context.json')
-    } catch {
+    } catch (err) {
+      log('error', `failed to load site-context.json: ${err instanceof Error ? err.message : err}`)
       return NextResponse.json(
         { error: 'No crawled pages found. Crawl your site first.' },
         { status: 400 }
@@ -21,35 +28,77 @@ export async function POST() {
     }
 
     if (!Array.isArray(pages) || pages.length === 0) {
+      log('error', 'site-context.json is empty or not an array')
       return NextResponse.json(
         { error: 'No crawled pages found. Crawl your site first.' },
         { status: 400 }
       )
     }
 
-    // Pick homepage + top 3-5 most important pages by word count and heading structure
-    const homepage = pages.find((p) => {
-      try { return new URL(p.url).pathname === '/' } catch { return false }
-    })
-    const otherPages = pages
-      .filter((p) => p !== homepage)
+    log('pages loaded', `${pages.length} pages, ${pages.reduce((s, p) => s + p.wordCount, 0)} total words`)
+
+    // Pick homepage + a diverse mix of page types to understand the brand voice
+    // 1. Find homepage flexibly (/, /de, /en, or shortest pathname)
+    const homepage = pages
+      .slice()
       .sort((a, b) => {
-        const aScore = a.wordCount + a.headings.length * 100
-        const bScore = b.wordCount + b.headings.length * 100
-        return bScore - aScore
+        try {
+          const pa = new URL(a.url).pathname.replace(/\/+$/, '') || '/'
+          const pb = new URL(b.url).pathname.replace(/\/+$/, '') || '/'
+          return pa.length - pb.length
+        } catch { return 0 }
       })
-      .slice(0, homepage ? 4 : 5)
+      .find((p) => {
+        try {
+          const path = new URL(p.url).pathname.replace(/\/+$/, '') || '/'
+          return path === '/' || /^\/[a-z]{2}$/.test(path) // /, /de, /en, etc.
+        } catch { return false }
+      })
+
+    if (homepage) log('homepage found', homepage.url)
+    else log('homepage not found', 'will pick by page type diversity')
+
+    // 2. Categorize remaining pages and prefer a mix
+    const remaining = pages.filter((p) => p !== homepage)
+    const isBlogPost = (p: CrawledPage) => /\/(blog|post|article|news)\//i.test(p.url)
+    const isCorePage = (p: CrawledPage) => !isBlogPost(p)
+
+    // Prefer core pages (about, services, pricing) over blog posts for brand voice
+    const corePages = remaining.filter(isCorePage).sort((a, b) => b.wordCount - a.wordCount)
+    const blogPosts = remaining.filter(isBlogPost).sort((a, b) => b.wordCount - a.wordCount)
+
+    // Take up to 2 core pages + up to 2 blog posts (for writing style), fill remaining slots
+    const maxOther = homepage ? 4 : 5
+    const selectedCore = corePages.slice(0, 2)
+    const selectedBlog = blogPosts.slice(0, Math.max(2, maxOther - selectedCore.length))
+    const otherPages = [...selectedCore, ...selectedBlog].slice(0, maxOther)
+
     const contextPages = homepage ? [homepage, ...otherPages] : otherPages
 
-    // Build brand context from crawled pages
+    log('pages selected', contextPages.map(p => {
+      const type = isBlogPost(p) ? 'blog' : p === homepage ? 'home' : 'core'
+      return `[${type}] ${p.url}`
+    }).join(', '))
+
+    // Build brand context — truncate each page to 3000 chars to keep prompt reasonable
+    const MAX_CONTENT_CHARS = 3000
     const brandContext = contextPages
       .map(
-        (p, i) =>
-          `--- PAGE ${i + 1}: ${p.title} (${p.url}) ---\n` +
-          `Headings: ${p.headings.map((h) => `${'#'.repeat(h.level)} ${h.text}`).join(' | ')}\n\n` +
-          `${p.content}`
+        (p, i) => {
+          const truncated = p.content.length > MAX_CONTENT_CHARS
+            ? p.content.slice(0, MAX_CONTENT_CHARS) + '\n[... content truncated ...]'
+            : p.content
+          return (
+            `--- PAGE ${i + 1}: ${p.title} (${p.url}) ---\n` +
+            `Headings: ${p.headings.map((h) => `${'#'.repeat(h.level)} ${h.text}`).join(' | ')}\n\n` +
+            truncated
+          )
+        }
       )
       .join('\n\n')
+
+    const promptCharCount = brandContext.length
+    log('prompt built', `${promptCharCount} chars of brand context (${contextPages.length} pages, max ${MAX_CONTENT_CHARS}/page)`)
 
     const generationPrompt = `You are a writing style strategist. Based on the following website pages, **generate** a comprehensive writing style guide for this brand's blog content. You are NOT extracting style from existing blog posts — you are creating a style guide from scratch based on the brand's identity, tone of copy, products, and audience.
 
@@ -86,7 +135,21 @@ Respond with ONLY valid JSON. No markdown code fences. The JSON object should ha
       },
     ]
 
-    const response = await provider.chat(messages, [], 'You are a writing style strategist. Return only valid JSON.')
+    log('llm call start', `model=${config.provider.model}, maxTokens=${config.provider.maxTokens || 'default'}`)
+
+    let response
+    try {
+      response = await provider.chat(messages, [], 'You are a writing style strategist. Return only valid JSON.')
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err)
+      log('llm call FAILED', errMsg)
+      return NextResponse.json(
+        { error: `LLM call failed: ${errMsg}` },
+        { status: 502 }
+      )
+    }
+
+    log('llm call done', `response=${response.content.length} chars, usage=${JSON.stringify(response.usage || {})}`)
 
     // Parse the JSON response
     let styleData: Record<string, string>
@@ -97,12 +160,17 @@ Respond with ONLY valid JSON. No markdown code fences. The JSON object should ha
         content = content.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '')
       }
       styleData = JSON.parse(content)
-    } catch {
+    } catch (parseErr) {
+      const preview = response.content.slice(0, 300)
+      log('json parse FAILED', `first 300 chars: ${preview}`)
       return NextResponse.json(
-        { error: 'Failed to parse writing style analysis. Try again.' },
+        { error: `Failed to parse LLM response as JSON. Response starts with: ${preview.slice(0, 100)}...` },
         { status: 500 }
       )
     }
+
+    const keys = Object.keys(styleData)
+    log('json parsed', `keys: ${keys.join(', ')}`)
 
     // Save each file
     const fileMap: Record<string, string> = {
@@ -120,8 +188,13 @@ Respond with ONLY valid JSON. No markdown code fences. The JSON object should ha
         const filePath = projectPath(projectId, `writing/${filename}`)
         await writeMarkdown(filePath, styleData[key])
         savedFiles.push(filename)
+        log('file saved', `${filename} (${styleData[key].length} chars)`)
+      } else {
+        log('file MISSING', `key "${key}" not in LLM response`)
       }
     }
+
+    log('done', `${savedFiles.length} files saved, ${contextPages.length} pages analyzed`)
 
     return NextResponse.json({
       success: true,
@@ -130,6 +203,9 @@ Respond with ONLY valid JSON. No markdown code fences. The JSON object should ha
     })
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Writing style analysis failed'
+    const stack = err instanceof Error ? err.stack : undefined
+    console.error(`[writing-style] UNHANDLED ERROR (${Date.now() - t0}ms):`, message)
+    if (stack) console.error(stack)
     return NextResponse.json({ error: message }, { status: 500 })
   }
 }
