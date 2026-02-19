@@ -89,6 +89,8 @@ This project packages that entire workflow into something anyone can run. Self-h
 
 **Persistent Memory** — After each conversation, the agent extracts key findings into memory. Next session, it remembers what it learned: keyword movements, decisions you made, content gaps it identified. SEO is longitudinal — your agent should be too.
 
+**Webflow CMS Publishing** — Connect your Webflow CMS from the Site Profile page. Enter your API token, pick a site and collection, and the agent gets a `publish_to_webflow` tool. Write an article, then publish it directly as a draft — nothing goes live without your review in Webflow. The collection schema is injected into the agent context so it knows exactly which fields to populate.
+
 **Editable Site Profile** — View and edit all crawled content, metadata, headings, and internal links per page. Expand any page to see its full structure, edit inline, or remove it. See your sitemap with visual crawl status indicators. Re-crawl or re-sync GSC anytime.
 
 ## Quick Start
@@ -171,6 +173,7 @@ The agent doesn't query data once and summarize — it investigates. Each messag
 | `brief_generator` | Generate structured content briefs with outlines and internal links |
 | `link_suggester` | Find internal linking opportunities across your sitemap |
 | `article_writer` | Write a full blog article matching your analyzed writing style |
+| `publish_to_webflow` | Publish an article draft to your connected Webflow CMS collection |
 | `code_sandbox` | Sandboxed numerical analysis on your SEO data |
 
 ### Writing Style System
@@ -224,7 +227,8 @@ flowchart TD
         T3[brief_generator]
         T4[link_suggester]
         T5[article_writer]
-        T6[code_sandbox]
+        T6[publish_to_webflow]
+        T7[code_sandbox]
     end
 
     subgraph Providers["LLM Providers"]
@@ -269,6 +273,7 @@ app/
 │   ├── projects/             # Multi-project CRUD
 │   ├── site-context/         # CRUD for crawled pages
 │   ├── sitemap/              # Sitemap URL management
+│   ├── webflow/              # Webflow API proxy (sites, collections, schema)
 │   └── writing-style/        # Style generation + file read/edit
 ├── chat/                     # Chat interface
 ├── onboarding/               # Setup wizard

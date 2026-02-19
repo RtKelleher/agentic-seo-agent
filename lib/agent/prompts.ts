@@ -96,6 +96,22 @@ export function buildSystemPrompt(
     )
   }
 
+  // Webflow CMS capability
+  if (schema.webflowAvailable) {
+    let webflowSection =
+      `## Webflow CMS Integration\n` +
+      `A Webflow CMS collection is connected. You can publish article drafts directly using the **publish_to_webflow** tool.\n` +
+      `- All items are published as **drafts only** — nothing goes live without human review in Webflow.\n` +
+      `- The tool accepts markdown content and converts it to HTML automatically.\n` +
+      `- Typical workflow: write an article with article_writer, then publish it with publish_to_webflow.\n`
+
+    if (schema.webflowSchemaMd) {
+      webflowSection += `\n### CMS Collection Schema\n${schema.webflowSchemaMd}\n`
+    }
+
+    sections.push(webflowSection)
+  }
+
   // Recent memories
   if (schema.recentMemories) {
     sections.push(

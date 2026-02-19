@@ -18,6 +18,7 @@ import * as briefGenerator from '../tools/brief-generator'
 import * as linkSuggester from '../tools/link-suggester'
 import * as codeSandbox from '../tools/code-sandbox'
 import * as articleWriter from '../tools/article-writer'
+import * as webflowPublish from '../tools/webflow-publish'
 
 // Tool registry
 const toolRegistry = new Map<
@@ -30,6 +31,7 @@ const toolRegistry = new Map<
   ['link_suggester', linkSuggester],
   ['code_sandbox', codeSandbox],
   ['article_writer', articleWriter],
+  ['publish_to_webflow', webflowPublish],
 ])
 
 const MAX_ITERATIONS = 5

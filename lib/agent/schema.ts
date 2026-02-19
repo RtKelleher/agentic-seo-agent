@@ -11,6 +11,8 @@ export interface AgentSchema {
   recentMemories: string
   sitemapUrls: string[]
   writingStyleAvailable: boolean
+  webflowAvailable: boolean
+  webflowSchemaMd: string
 }
 
 export async function buildSchema(): Promise<AgentSchema> {
@@ -104,6 +106,17 @@ export async function buildSchema(): Promise<AgentSchema> {
     writingStyleAvailable = await fileExists(projectPath(projectId, 'writing/TONE.md'))
   }
 
+  // Check if Webflow is configured for the active project
+  let webflowAvailable = false
+  let webflowSchemaMd = ''
+  if (projectId) {
+    const activeProject = config.projects.find((p) => p.id === projectId)
+    if (activeProject?.webflowApiToken && activeProject?.webflowCollectionId) {
+      webflowAvailable = true
+      webflowSchemaMd = activeProject.webflowSchemaMd || ''
+    }
+  }
+
   return {
     config,
     agentPersonality,
@@ -113,5 +126,7 @@ export async function buildSchema(): Promise<AgentSchema> {
     recentMemories,
     sitemapUrls,
     writingStyleAvailable,
+    webflowAvailable,
+    webflowSchemaMd,
   }
 }

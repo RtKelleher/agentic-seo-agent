@@ -17,6 +17,10 @@ function redactConfig(config: AppConfig): Record<string, unknown> {
           }
         : undefined,
     },
+    projects: config.projects.map((p) => ({
+      ...p,
+      webflowApiToken: p.webflowApiToken ? '***' : undefined,
+    })),
   }
 }
 

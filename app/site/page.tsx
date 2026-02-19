@@ -99,6 +99,9 @@ export default function SiteProfilePage() {
             {/* Writing style files */}
             <WritingStyleSection />
 
+            {/* Webflow CMS integration */}
+            <WebflowSection />
+
             {/* Page list */}
             <div className="space-y-4">
               {pages.map((page, i) => (
@@ -857,6 +860,346 @@ function SiteActions({ siteUrl }: { siteUrl: string }) {
         </svg>
         {crawling ? 'Crawling...' : 'Re-crawl'}
       </Button>
+    </div>
+  )
+}
+
+/* ── Webflow CMS Section ── */
+
+interface WebflowSite {
+  id: string
+  displayName: string
+  shortName: string
+}
+
+interface WebflowCollection {
+  id: string
+  displayName: string
+  slug: string
+}
+
+function WebflowSection() {
+  const [expanded, setExpanded] = useState(false)
+  const [token, setToken] = useState('')
+  const [sites, setSites] = useState<WebflowSite[]>([])
+  const [collections, setCollections] = useState<WebflowCollection[]>([])
+  const [selectedSiteId, setSelectedSiteId] = useState('')
+  const [selectedCollectionId, setSelectedCollectionId] = useState('')
+  const [schemaMd, setSchemaMd] = useState('')
+  const [loading, setLoading] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+  const [connected, setConnected] = useState(false)
+  const [connectedCollection, setConnectedCollection] = useState('')
+
+  // Load existing config on mount
+  useEffect(() => {
+    async function load() {
+      try {
+        const res = await fetch('/api/projects')
+        const data = await res.json()
+        const active = (data.projects || []).find(
+          (p: { id: string }) => p.id === data.activeProjectId
+        )
+        if (active?.webflowApiToken && active.webflowCollectionId) {
+          setConnected(true)
+          setConnectedCollection(active.webflowCollectionId)
+          setSchemaMd(active.webflowSchemaMd || '')
+        }
+      } catch {
+        // ignore
+      }
+    }
+    load()
+  }, [])
+
+  async function loadSites() {
+    if (!token.trim()) return
+    setError('')
+    setLoading('sites')
+    setSites([])
+    setCollections([])
+    setSelectedSiteId('')
+    setSelectedCollectionId('')
+    setSchemaMd('')
+    try {
+      const res = await fetch('/api/webflow', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'list_sites', token }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Failed to load sites')
+      setSites(data.sites || [])
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load sites')
+    }
+    setLoading('')
+  }
+
+  async function loadCollections(siteId: string) {
+    setSelectedSiteId(siteId)
+    setSelectedCollectionId('')
+    setSchemaMd('')
+    setCollections([])
+    if (!siteId) return
+    setError('')
+    setLoading('collections')
+    try {
+      const res = await fetch('/api/webflow', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'list_collections', token, siteId }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Failed to load collections')
+      setCollections(data.collections || [])
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load collections')
+    }
+    setLoading('')
+  }
+
+  async function loadSchema(collectionId: string) {
+    setSelectedCollectionId(collectionId)
+    setSchemaMd('')
+    if (!collectionId) return
+    setError('')
+    setLoading('schema')
+    try {
+      const res = await fetch('/api/webflow', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'get_schema', token, collectionId }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Failed to load schema')
+      setSchemaMd(data.schemaMd || '')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load schema')
+    }
+    setLoading('')
+  }
+
+  async function handleSave() {
+    setSaving(true)
+    setError('')
+    try {
+      // Load current config to find the active project index
+      const projRes = await fetch('/api/projects')
+      const projData = await projRes.json()
+      const projects = projData.projects || []
+      const idx = projects.findIndex((p: { id: string }) => p.id === projData.activeProjectId)
+      if (idx === -1) throw new Error('No active project')
+
+      // Update the project's webflow fields
+      projects[idx] = {
+        ...projects[idx],
+        webflowApiToken: token,
+        webflowSiteId: selectedSiteId,
+        webflowCollectionId: selectedCollectionId,
+        webflowSchemaMd: schemaMd,
+      }
+
+      await fetch('/api/config', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projects }),
+      })
+
+      setConnected(true)
+      setConnectedCollection(selectedCollectionId)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to save')
+    }
+    setSaving(false)
+  }
+
+  async function handleDisconnect() {
+    setSaving(true)
+    setError('')
+    try {
+      const projRes = await fetch('/api/projects')
+      const projData = await projRes.json()
+      const projects = projData.projects || []
+      const idx = projects.findIndex((p: { id: string }) => p.id === projData.activeProjectId)
+      if (idx === -1) throw new Error('No active project')
+
+      projects[idx] = {
+        ...projects[idx],
+        webflowApiToken: undefined,
+        webflowSiteId: undefined,
+        webflowCollectionId: undefined,
+        webflowSchemaMd: undefined,
+      }
+
+      await fetch('/api/config', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projects }),
+      })
+
+      setConnected(false)
+      setConnectedCollection('')
+      setToken('')
+      setSites([])
+      setCollections([])
+      setSelectedSiteId('')
+      setSelectedCollectionId('')
+      setSchemaMd('')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to disconnect')
+    }
+    setSaving(false)
+  }
+
+  return (
+    <div className="mb-8 rounded-xl border border-border bg-card overflow-hidden">
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className="flex w-full items-center gap-3 px-5 py-4 text-left hover:bg-muted/20 transition-colors"
+      >
+        <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M12 2L2 7l10 5 10-5-10-5z" />
+            <path d="M2 17l10 5 10-5" />
+            <path d="M2 12l10 5 10-5" />
+          </svg>
+        </div>
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-medium">Webflow CMS</p>
+          <p className="text-xs text-muted-foreground">
+            {connected
+              ? `Connected (collection: ${connectedCollection.slice(0, 12)}...)`
+              : 'Not connected'}
+          </p>
+        </div>
+        {connected && (
+          <span className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full bg-green-500/10 text-green-500 mr-1">
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
+              <path d="M20 6L9 17l-5-5" />
+            </svg>
+          </span>
+        )}
+        <svg
+          width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+          className={`flex-shrink-0 text-muted-foreground transition-transform duration-200 ${expanded ? 'rotate-180' : ''}`}
+        >
+          <path d="M6 9l6 6 6-6" />
+        </svg>
+      </button>
+
+      {expanded && (
+        <div className="border-t border-border px-5 py-4 space-y-4">
+          {connected ? (
+            <>
+              <div className="rounded-lg border border-green-500/20 bg-green-500/5 p-3">
+                <p className="text-sm font-medium text-green-600 dark:text-green-400">Webflow Connected</p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  The agent can publish article drafts to your Webflow CMS.
+                </p>
+              </div>
+              {schemaMd && (
+                <div>
+                  <h4 className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-2">
+                    Collection Schema
+                  </h4>
+                  <div className="rounded-lg border border-border/60 bg-muted/10 p-3 max-h-48 overflow-y-auto custom-scrollbar">
+                    <pre className="text-xs leading-relaxed text-foreground/80 whitespace-pre-wrap font-mono">
+                      {schemaMd}
+                    </pre>
+                  </div>
+                </div>
+              )}
+              <Button size="sm" variant="destructive" onClick={handleDisconnect} disabled={saving}>
+                {saving ? 'Disconnecting...' : 'Disconnect Webflow'}
+              </Button>
+            </>
+          ) : (
+            <>
+              {/* Token input */}
+              <div>
+                <label className="text-xs font-medium text-muted-foreground">Webflow API Token</label>
+                <div className="mt-1 flex gap-2">
+                  <Input
+                    type="password"
+                    value={token}
+                    onChange={(e) => setToken(e.target.value)}
+                    placeholder="Enter your Webflow API token"
+                    className="flex-1"
+                  />
+                  <Button size="sm" onClick={loadSites} disabled={!token.trim() || loading === 'sites'}>
+                    {loading === 'sites' ? 'Loading...' : 'Load Sites'}
+                  </Button>
+                </div>
+              </div>
+
+              {/* Sites dropdown */}
+              {sites.length > 0 && (
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground">Site</label>
+                  <select
+                    value={selectedSiteId}
+                    onChange={(e) => loadCollections(e.target.value)}
+                    className="mt-1 w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm focus:ring-1 focus:ring-ring"
+                  >
+                    <option value="">Select a site...</option>
+                    {sites.map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {s.displayName || s.shortName}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              {/* Collections dropdown */}
+              {collections.length > 0 && (
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground">Collection</label>
+                  <select
+                    value={selectedCollectionId}
+                    onChange={(e) => loadSchema(e.target.value)}
+                    className="mt-1 w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm focus:ring-1 focus:ring-ring"
+                  >
+                    <option value="">Select a collection...</option>
+                    {collections.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.displayName || c.slug}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              {/* Schema preview */}
+              {schemaMd && (
+                <div>
+                  <h4 className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-2">
+                    Collection Schema
+                  </h4>
+                  <div className="rounded-lg border border-border/60 bg-muted/10 p-3 max-h-48 overflow-y-auto custom-scrollbar">
+                    <pre className="text-xs leading-relaxed text-foreground/80 whitespace-pre-wrap font-mono">
+                      {schemaMd}
+                    </pre>
+                  </div>
+                </div>
+              )}
+
+              {/* Save button */}
+              {selectedCollectionId && schemaMd && (
+                <Button size="sm" onClick={handleSave} disabled={saving}>
+                  {saving ? 'Saving...' : 'Save Webflow Connection'}
+                </Button>
+              )}
+            </>
+          )}
+
+          {error && (
+            <p className="text-xs text-destructive">{error}</p>
+          )}
+        </div>
+      )}
     </div>
   )
 }

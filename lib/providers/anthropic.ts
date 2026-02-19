@@ -38,6 +38,11 @@ export class AnthropicProvider extends BaseProvider {
     }))
   }
 
+  /** Ensure tool IDs match Anthropic's required pattern ^[a-zA-Z0-9_-]+$ */
+  private sanitizeToolId(id: string): string {
+    return id.replace(/[^a-zA-Z0-9_-]/g, '_')
+  }
+
   protected formatMessages(messages: ChatMessage[]) {
     const out: Record<string, unknown>[] = []
 
@@ -47,7 +52,7 @@ export class AnthropicProvider extends BaseProvider {
           role: 'user',
           content: msg.toolResults.map((r) => ({
             type: 'tool_result',
-            tool_use_id: r.toolCallId,
+            tool_use_id: this.sanitizeToolId(r.toolCallId),
             content: r.content,
             ...(r.isError ? { is_error: true } : {}),
           })),
@@ -63,7 +68,7 @@ export class AnthropicProvider extends BaseProvider {
         for (const tc of msg.toolCalls) {
           content.push({
             type: 'tool_use',
-            id: tc.id,
+            id: this.sanitizeToolId(tc.id),
             name: tc.name,
             input: tc.arguments,
           })

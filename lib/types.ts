@@ -21,6 +21,10 @@ export interface ProjectConfig {
   createdAt: string
   lastSync?: string
   lastCrawl?: string
+  webflowApiToken?: string
+  webflowSiteId?: string
+  webflowCollectionId?: string
+  webflowSchemaMd?: string
 }
 
 export interface CrawlConfig {
