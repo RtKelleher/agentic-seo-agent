@@ -160,7 +160,7 @@ Open [http://localhost:3000](http://localhost:3000). The app walks you through:
 3. **Crawl & Sync** — Auto-crawl your site + pull 90 days of GSC data
 4. **Chat** — Start asking questions
 
-No database to set up. No Docker. No config files to wrestle with.
+No database to set up. No Docker. No config files to wrestle with. On first run, the app auto-creates a `data/` directory from `data.example/` with a default config, agent personality, and empty memory — everything the app needs to start.
 
 ## How It Works
 

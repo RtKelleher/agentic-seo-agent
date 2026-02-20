@@ -1,8 +1,7 @@
 {
   "provider": {
-    "type": "openai",
-    "model": "gpt-5.2",
-    "maxTokens": 4096
+    "type": "openrouter",
+    "model": "minimax/minimax-m2.5"
   },
   "google": {},
   "projects": [],
