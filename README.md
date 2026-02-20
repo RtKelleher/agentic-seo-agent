@@ -59,7 +59,7 @@ This project packages that entire workflow into something anyone can run. Self-h
 
 ## Features
 
-**Google Search Console Integration** — OAuth connect, auto-sync 90 days of query + page data with date-level trends. Declining keywords, growing opportunities, and quick wins — found automatically. Tokens auto-refresh so you never have to re-authenticate.
+**Live Google Search Console Data** — OAuth connect with live API queries — the agent fetches GSC data directly from Google in real-time, no manual sync required. 90 days of query + page data with date-level trends. Declining keywords, growing opportunities, and quick wins — found automatically. Falls back to cached data if auth isn't configured. Tokens auto-refresh so you never have to re-authenticate.
 
 **Site Crawler** — Sitemap-based crawling with Mozilla Readability for clean content extraction. Maps internal links, extracts metadata, builds a full content inventory the agent can reference.
 
@@ -83,11 +83,17 @@ This project packages that entire workflow into something anyone can run. Self-h
 
 **Internal Link Suggestions** — The agent knows every URL in your sitemap and every page it's crawled. It suggests contextual links based on actual content overlap, not keyword matching.
 
+**Stop Button + Live Token Counter** — Full control over cost and generation. A stop button appears during streaming so you can cancel any response mid-generation — partial content is preserved, not lost. A live token counter in the input bar shows cumulative usage (prompt + completion tokens) as the agent works, and persists after the response completes so you always know what a message cost.
+
+**No Token Limits** — No artificial output caps. The agent uses the model's full context window (up to 128K for Anthropic). You control cost with the stop button and live token counter, not by truncating responses.
+
 **Quick Actions** — One-click from the chat: Content Gaps, Weekly Report, Generate Brief, Declining Keywords, Quick Wins, Write Article, and Strategy.
 
 **Editable Agent Personality** — `data/AGENT.md` controls how the agent thinks and writes. Change its tone, focus area, language, or output format. Fork someone else's `AGENT.md` to try a different strategy. No code changes needed.
 
 **Persistent Memory** — After each conversation, the agent extracts key findings into memory. Next session, it remembers what it learned: keyword movements, decisions you made, content gaps it identified. SEO is longitudinal — your agent should be too.
+
+**Cross-Provider Chat History** — Switch between OpenRouter, Anthropic, and OpenAI mid-conversation without errors. Tool-call history from one provider is automatically flattened into plain text before being sent to another, so there are never orphaned tool ID conflicts.
 
 **Webflow CMS Publishing** — Connect your Webflow CMS from the Site Profile page. Enter your API token, pick a site and collection, and the agent gets a `publish_to_webflow` tool. Write an article, then publish it directly as a draft — nothing goes live without your review in Webflow. The collection schema is injected into the agent context so it knows exactly which fields to populate.
 
@@ -168,7 +174,7 @@ The agent doesn't query data once and summarize — it investigates. Each messag
 
 | Tool | What It Does |
 |------|-------------|
-| `gsc_query` | Query GSC data — overview, declining, growing, opportunities, time-series trends |
+| `gsc_query` | Query GSC data live from Google's API — overview, declining, growing, opportunities, time-series trends |
 | `site_context` | Search crawled content by topic, find thin pages, check keyword coverage |
 | `brief_generator` | Generate structured content briefs with outlines and internal links |
 | `link_suggester` | Find internal linking opportunities across your sitemap |
@@ -258,6 +264,8 @@ flowchart TD
 - **BYOK** — Bring Your Own Key. No server-side key management, no usage tracking, no middleman.
 - **SSE via POST** — `fetch()` + `getReader()` for streaming (not `EventSource`, which is GET-only).
 - **OpenRouter inherits from OpenAI** — One base adapter handles all OpenAI-compatible APIs. Adding a new provider is ~20 lines.
+- **Live GSC over cached data** — The `gsc_query` tool calls Google's API directly using auto-refreshed tokens. No manual sync step needed. Falls back to cached JSON if auth fails.
+- **Cross-provider history flattening** — Tool-call history is flattened to plain text before sending to any LLM, so switching providers mid-conversation never causes ID mismatches.
 - **Auto-migration** — Legacy flat-file data layouts are automatically migrated into the project directory structure on startup.
 
 ### File Structure
@@ -336,10 +344,6 @@ The community can share `AGENT.md` files for different niches — e-commerce, lo
 ### Writing Style
 
 After analyzing your site's style, edit any of the 6 style files on the Site Profile page. Want a more casual tone? Edit `TONE.md`. Want to ban specific jargon? Add it to `ANTI_WORDS.md`. The article writer follows these files as strict rules.
-
-### Max Tokens
-
-Configure max response length per model in Settings > Advanced.
 
 ## Contributing
 
