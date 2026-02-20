@@ -51,7 +51,7 @@ Other tools show you dashboards. This one does the work.
 
 ## Origin Story
 
-This started as a manual workflow. I connected Claude Code to my Supabase CMS and Google Search Console, wrote knowledge files for context, and let the agent manage my blog's SEO — writing, optimizing, monitoring, publishing.
+This started as a manual workflow. I connected Claude Code to my Supabase CMS and Google Search Console, wrote knowledge files for context, and let the agent manage my blog's SEO on [marc0.dev](https://www.marc0.dev/en) — writing, optimizing, monitoring, publishing.
 
 **The result: 68,000 impressions and 1,300 clicks in 9 days.** My blog went from ~5 impressions/week to 200 clicks/day.
 
