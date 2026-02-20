@@ -115,10 +115,7 @@ Return a JSON object with these exact keys. Each value should be detailed markdo
 
 Respond with ONLY valid JSON. No markdown code fences. The JSON object should have exactly these 6 string keys: ANTI_WORDS, TONE, STRUCTURE, EXAMPLES, CONTEXT, SENTENCE_STYLE.`
 
-    // Override maxTokens — style generation produces 6 detailed files in one JSON response
-    // and routinely needs 8K+ output tokens. The user's configured maxTokens (often 4096) is too low.
-    const styleMaxTokens = Math.max(config.provider.maxTokens || 0, 16000)
-    const provider = createProvider({ ...config.provider, maxTokens: styleMaxTokens })
+    const provider = createProvider(config.provider)
     const messages: ChatMessage[] = [
       {
         id: 'style-gen-1',
@@ -128,7 +125,7 @@ Respond with ONLY valid JSON. No markdown code fences. The JSON object should ha
       },
     ]
 
-    log('llm call start', `model=${config.provider.model}, maxTokens=${styleMaxTokens} (user config: ${config.provider.maxTokens || 'default'})`)
+    log('llm call start', `model=${config.provider.model}`)
 
     let response
     try {

@@ -1,10 +1,11 @@
-import type { ToolDefinition, GSCQueryRow } from '../types'
-import { readProjectJSON, getActiveProjectId } from '../store'
+import type { ToolDefinition, GSCQueryRow, AppConfig } from '../types'
+import { readProjectJSON, readJSON, getActiveProjectId } from '../store'
+import { getValidToken, querySearchAnalytics } from '../gsc/client'
 
 export const definition: ToolDefinition = {
   name: 'gsc_query',
   description:
-    'Query cached Google Search Console data. Supports keyword filtering, sorting, and trend analysis. Use type "overview" for aggregated data, "trends" for position/click changes over time, or "declining" to find keywords losing position.',
+    'Query Google Search Console data live from the API. Supports keyword filtering, sorting, and trend analysis. Use type "overview" for aggregated data, "trends" for position/click changes over time, or "declining" to find keywords losing position.',
   parameters: {
     type: 'object',
     properties: {
@@ -52,6 +53,81 @@ interface GSCData {
   dateRange?: { startDate: string; endDate: string }
 }
 
+/** Try to fetch live GSC data; fall back to cached JSON if auth fails */
+async function fetchLiveData(type: string): Promise<{ data: GSCData; live: boolean }> {
+  try {
+    const config = await readJSON<AppConfig>('config.json')
+    const project = config.projects.find(p => p.id === config.activeProjectId)
+    if (!project) throw new Error('No active project')
+
+    const { token } = await getValidToken(config)
+    const siteUrl = project.siteUrl
+
+    // Date range: last 90 days
+    const endDate = new Date()
+    const startDate = new Date()
+    startDate.setDate(endDate.getDate() - 90)
+    const fmt = (d: Date) => d.toISOString().split('T')[0]
+
+    const dateRange = { startDate: fmt(startDate), endDate: fmt(endDate) }
+
+    // Fetch aggregated query data
+    const queries = await querySearchAnalytics(token, siteUrl, {
+      startDate: dateRange.startDate,
+      endDate: dateRange.endDate,
+      dimensions: ['query'],
+      rowLimit: 5000,
+    })
+
+    // For trends/declining/growing, also fetch date-level data
+    let dateQueries: GSCQueryRow[] | undefined
+    if (type === 'trends' || type === 'declining' || type === 'growing') {
+      dateQueries = await querySearchAnalytics(token, siteUrl, {
+        startDate: dateRange.startDate,
+        endDate: dateRange.endDate,
+        dimensions: ['query', 'date'],
+        rowLimit: 25000,
+      })
+    }
+
+    // Fetch page data
+    const pageRows = await querySearchAnalytics(token, siteUrl, {
+      startDate: dateRange.startDate,
+      endDate: dateRange.endDate,
+      dimensions: ['page'],
+      rowLimit: 5000,
+    })
+
+    const pages = pageRows.map(r => ({
+      page: r.page || r.query,
+      clicks: r.clicks,
+      impressions: r.impressions,
+      ctr: r.ctr,
+      position: r.position,
+    }))
+
+    return {
+      data: {
+        queries,
+        dateQueries,
+        pages,
+        syncedAt: new Date().toISOString(),
+        dateRange,
+      },
+      live: true,
+    }
+  } catch {
+    // Fall back to cached data
+    try {
+      const projectId = await getActiveProjectId()
+      const data = await readProjectJSON<GSCData>(projectId, 'gsc-data.json')
+      return { data, live: false }
+    } catch {
+      throw new Error('No GSC data available. Please authenticate with Google and sync your Search Console data.')
+    }
+  }
+}
+
 export async function execute(args: Record<string, unknown>): Promise<string> {
   const type = (args.type as string) || 'overview'
   const keywordPattern = args.keywordPattern as string | undefined
@@ -61,30 +137,26 @@ export async function execute(args: Record<string, unknown>): Promise<string> {
   const limit = (args.limit as number) || 20
   const minImpressions = args.minImpressions as number | undefined
 
-  let data: GSCData
-  try {
-    const projectId = await getActiveProjectId()
-    data = await readProjectJSON<GSCData>(projectId, 'gsc-data.json')
-  } catch {
-    return 'No GSC data available. Please sync Google Search Console data first.'
-  }
+  const { data, live } = await fetchLiveData(type)
 
   if (!data.queries || data.queries.length === 0) {
     return 'No GSC query data available. Please sync Google Search Console data first.'
   }
 
+  const sourceLabel = live ? 'live' : 'cached'
+
   switch (type) {
     case 'declining':
-      return analyzeTrend(data, 'declining', keywordPattern, minImpressions, limit)
+      return analyzeTrend(data, 'declining', keywordPattern, minImpressions, limit, sourceLabel)
     case 'growing':
-      return analyzeTrend(data, 'growing', keywordPattern, minImpressions, limit)
+      return analyzeTrend(data, 'growing', keywordPattern, minImpressions, limit, sourceLabel)
     case 'opportunities':
-      return findOpportunities(data, keywordPattern, limit)
+      return findOpportunities(data, keywordPattern, limit, sourceLabel)
     case 'trends':
-      return showTrends(data, keywordPattern, limit)
+      return showTrends(data, keywordPattern, limit, sourceLabel)
     case 'overview':
     default:
-      return queryOverview(data, keywordPattern, pageFilter, sortBy, sortOrder, limit, minImpressions)
+      return queryOverview(data, keywordPattern, pageFilter, sortBy, sortOrder, limit, minImpressions, sourceLabel)
   }
 }
 
@@ -108,6 +180,7 @@ function queryOverview(
   sortOrder = 'desc',
   limit = 20,
   minImpressions?: number,
+  sourceLabel = 'cached',
 ): string {
   let rows = applyKeywordFilter([...data.queries], keywordPattern)
 
@@ -130,7 +203,7 @@ function queryOverview(
   if (rows.length === 0) return 'No results match the specified filters.'
 
   const lines: string[] = [
-    `**GSC Data** (${rows.length} results, synced: ${data.syncedAt || 'unknown'}, range: ${data.dateRange?.startDate || '?'} to ${data.dateRange?.endDate || '?'})`,
+    `**GSC Data** (${rows.length} results, source: ${sourceLabel}, range: ${data.dateRange?.startDate || '?'} to ${data.dateRange?.endDate || '?'})`,
     '',
     '| Keyword | Clicks | Impressions | CTR | Avg Position |',
     '|---------|--------|-------------|-----|-------------|',
@@ -153,6 +226,7 @@ function analyzeTrend(
   keywordPattern?: string,
   minImpressions?: number,
   limit = 20,
+  sourceLabel = 'cached',
 ): string {
   if (!data.dateQueries || data.dateQueries.length === 0) {
     return 'No date-level GSC data available. Please re-sync your Search Console data to enable trend analysis.'
@@ -230,7 +304,7 @@ function analyzeTrend(
   const dateInfo = `First half: ${allDates[0]} to ${midpoint} | Second half: ${midpoint} to ${allDates[allDates.length - 1]}`
 
   const lines: string[] = [
-    `**${label}** (${filtered.length} keywords)`,
+    `**${label}** (${filtered.length} keywords, source: ${sourceLabel})`,
     `_${dateInfo}_`,
     '',
     '| Keyword | Early Pos | Recent Pos | Change | Early Clicks | Recent Clicks | Impressions |',
@@ -249,7 +323,7 @@ function analyzeTrend(
 
 /* ── Show keyword trends over time ── */
 
-function showTrends(data: GSCData, keywordPattern?: string, limit = 10): string {
+function showTrends(data: GSCData, keywordPattern?: string, limit = 10, sourceLabel = 'cached'): string {
   if (!data.dateQueries || data.dateQueries.length === 0) {
     return 'No date-level GSC data available. Please re-sync your Search Console data to enable trend analysis.'
   }
@@ -280,7 +354,7 @@ function showTrends(data: GSCData, keywordPattern?: string, limit = 10): string 
   }
 
   const keywords = [...byKeyword.keys()].slice(0, limit)
-  const lines: string[] = [`**Keyword Trends** for "${keywordPattern}" (${keywords.length} keywords)`]
+  const lines: string[] = [`**Keyword Trends** for "${keywordPattern}" (${keywords.length} keywords, source: ${sourceLabel})`]
 
   for (const kw of keywords) {
     const kwRows = byKeyword.get(kw)!.sort((a, b) => (a.date! > b.date! ? 1 : -1))
@@ -297,7 +371,7 @@ function showTrends(data: GSCData, keywordPattern?: string, limit = 10): string 
 
 /* ── Quick wins / opportunities ── */
 
-function findOpportunities(data: GSCData, keywordPattern?: string, limit = 20): string {
+function findOpportunities(data: GSCData, keywordPattern?: string, limit = 20, sourceLabel = 'cached'): string {
   let rows = applyKeywordFilter([...data.queries], keywordPattern)
 
   // Quick wins: position 5-20 with decent impressions (close to page 1 or top of page 2)
@@ -314,7 +388,7 @@ function findOpportunities(data: GSCData, keywordPattern?: string, limit = 20): 
   if (rows.length === 0) return 'No quick-win opportunities found.'
 
   const lines: string[] = [
-    `**Quick Win Opportunities** (${rows.length} keywords at position 5-20 with impressions)`,
+    `**Quick Win Opportunities** (${rows.length} keywords at position 5-20 with impressions, source: ${sourceLabel})`,
     '_These keywords are close to page 1 — small improvements could yield big traffic gains._',
     '',
     '| Keyword | Position | Impressions | Clicks | CTR |',

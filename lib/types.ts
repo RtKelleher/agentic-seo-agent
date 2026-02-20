@@ -148,4 +148,5 @@ export type AgentStreamEvent =
   | { type: 'tool_result'; result: ToolResult }
   | { type: 'tool_error'; error: string; toolCallId: string }
   | { type: 'error'; error: string }
-  | { type: 'done' }
+  | { type: 'usage'; usage: { promptTokens: number; completionTokens: number } }
+  | { type: 'done'; usage?: { promptTokens: number; completionTokens: number } }

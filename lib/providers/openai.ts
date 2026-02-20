@@ -78,7 +78,7 @@ export class OpenAIProvider extends BaseProvider {
         ...(systemPrompt ? [{ role: 'system', content: systemPrompt }] : []),
         ...this.formatMessages(messages),
       ],
-      max_tokens: this.maxTokens,
+      ...(this.maxTokens ? { max_tokens: this.maxTokens } : {}),
     }
 
     if (tools?.length) {
@@ -131,8 +131,9 @@ export class OpenAIProvider extends BaseProvider {
         ...(systemPrompt ? [{ role: 'system', content: systemPrompt }] : []),
         ...this.formatMessages(messages),
       ],
-      max_tokens: this.maxTokens,
+      ...(this.maxTokens ? { max_tokens: this.maxTokens } : {}),
       stream: true,
+      stream_options: { include_usage: true },
     }
 
     if (tools?.length) {

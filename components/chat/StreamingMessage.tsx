@@ -110,6 +110,7 @@ export function StreamingMessage({ content, toolCalls, toolResults }: StreamingM
             <span className="typing-cursor inline-block h-4 w-0.5 bg-primary ml-0.5 align-middle rounded-full" />
           </div>
         )}
+
       </div>
     </div>
   )

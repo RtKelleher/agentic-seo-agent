@@ -94,7 +94,7 @@ export class AnthropicProvider extends BaseProvider {
     const body: Record<string, unknown> = {
       model: this.model,
       messages: this.formatMessages(messages),
-      max_tokens: this.maxTokens,
+      max_tokens: this.maxTokens || 128000,
     }
 
     if (systemPrompt) {
@@ -153,7 +153,7 @@ export class AnthropicProvider extends BaseProvider {
     const body: Record<string, unknown> = {
       model: this.model,
       messages: this.formatMessages(messages),
-      max_tokens: this.maxTokens,
+      max_tokens: this.maxTokens || 128000,
       stream: true,
     }
 

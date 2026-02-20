@@ -48,8 +48,9 @@ export async function* runAgent(userMessage: string): AsyncGenerator<AgentStream
     // Create provider
     const provider = createProvider(schema.config.provider)
 
-    // Load and update chat history
-    const history: ChatMessage[] = schema.chatHistory
+    // Load chat history — flatten old tool turns into plain text so switching
+    // providers never causes orphaned tool_use / tool_result ID mismatches.
+    const history: ChatMessage[] = flattenToolHistory(schema.chatHistory)
 
     // Add user message
     history.push({
@@ -58,6 +59,10 @@ export async function* runAgent(userMessage: string): AsyncGenerator<AgentStream
       content: userMessage,
       timestamp: Date.now(),
     })
+
+    // Cumulative token usage across iterations
+    let totalPromptTokens = 0
+    let totalCompletionTokens = 0
 
     // Agent loop — stream LLM, execute tool calls, repeat
     for (let iteration = 0; iteration < MAX_ITERATIONS; iteration++) {
@@ -113,6 +118,11 @@ export async function* runAgent(userMessage: string): AsyncGenerator<AgentStream
 
           case 'done':
             finishReason = chunk.finishReason
+            if (chunk.usage) {
+              totalPromptTokens += chunk.usage.promptTokens
+              totalCompletionTokens += chunk.usage.completionTokens
+              yield { type: 'usage', usage: { promptTokens: totalPromptTokens, completionTokens: totalCompletionTokens } }
+            }
             break
         }
       }
@@ -199,8 +209,8 @@ export async function* runAgent(userMessage: string): AsyncGenerator<AgentStream
       // Loop back to LLM with tool results
     }
 
-    // Save chat history (cap at last N messages)
-    const trimmedHistory = history.slice(-MAX_HISTORY)
+    // Save chat history (cap at last N messages, trimmed at safe boundaries)
+    const trimmedHistory = trimHistory(history, MAX_HISTORY)
     try {
       const projectId = await getActiveProjectId()
       await writeProjectJSON(projectId, 'chat-history.json', trimmedHistory)
@@ -214,7 +224,7 @@ export async function* runAgent(userMessage: string): AsyncGenerator<AgentStream
       // Best-effort, ignore errors
     })
 
-    yield { type: 'done' }
+    yield { type: 'done', usage: { promptTokens: totalPromptTokens, completionTokens: totalCompletionTokens } }
   } catch (err) {
     const errorMsg = err instanceof Error ? err.message : 'An unexpected error occurred'
     yield { type: 'error', error: errorMsg }
@@ -223,4 +233,69 @@ export async function* runAgent(userMessage: string): AsyncGenerator<AgentStream
 
 function generateId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
+}
+
+/**
+ * Flatten tool-call history into plain text messages.
+ *
+ * Problem: switching providers mid-conversation means tool_use IDs from
+ * provider A get sent to provider B, which rejects the orphaned references.
+ *
+ * Solution: convert assistant messages that had tool calls into plain text
+ * (including a summary of what tools ran and their results), and drop the
+ * raw 'tool' messages entirely. The LLM still gets full conversational context
+ * but no cross-provider ID conflicts. Current-turn tool calls are added to
+ * history *after* this function runs, so they're never affected.
+ */
+function flattenToolHistory(messages: ChatMessage[]): ChatMessage[] {
+  const result: ChatMessage[] = []
+
+  for (let i = 0; i < messages.length; i++) {
+    const msg = messages[i]
+
+    // Drop raw tool-result messages — their content is folded into the assistant message above
+    if (msg.role === 'tool') continue
+
+    // If assistant had tool calls, flatten into plain text
+    if (msg.role === 'assistant' && msg.toolCalls?.length) {
+      let flatContent = msg.content || ''
+
+      // Look ahead for the matching tool results
+      const nextMsg = messages[i + 1]
+      if (nextMsg?.role === 'tool' && nextMsg.toolResults?.length) {
+        const toolSummary = nextMsg.toolResults
+          .map(r => `[${r.name}]: ${r.content.slice(0, 500)}${r.content.length > 500 ? '...' : ''}`)
+          .join('\n\n')
+        flatContent += (flatContent ? '\n\n' : '') + toolSummary
+      }
+
+      result.push({
+        ...msg,
+        role: 'assistant',
+        content: flatContent || '(used tools)',
+        toolCalls: undefined,
+        toolResults: undefined,
+      })
+      continue
+    }
+
+    result.push(msg)
+  }
+
+  return result
+}
+
+/**
+ * Trim history to at most `max` messages, starting on a 'user' message.
+ */
+function trimHistory(messages: ChatMessage[], max: number): ChatMessage[] {
+  if (messages.length <= max) return messages
+
+  for (let i = messages.length - max; i < messages.length; i++) {
+    if (messages[i].role === 'user') {
+      return messages.slice(i)
+    }
+  }
+
+  return messages.slice(-max)
 }

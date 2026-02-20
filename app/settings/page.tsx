@@ -3,9 +3,7 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
-import type { AppConfig } from '@/lib/types'
 
 export default function SettingsPage() {
   const router = useRouter()
@@ -122,21 +120,13 @@ function AgentInstructions() {
 /* ── Advanced Section ── */
 
 function AdvancedSection() {
-  const [maxTokens, setMaxTokens] = useState(4096)
   const [loading, setLoading] = useState(true)
-  const [saving, setSaving] = useState(false)
-  const [saved, setSaved] = useState(false)
   const [memoryFiles, setMemoryFiles] = useState<string[]>([])
 
   useEffect(() => {
     async function load() {
       try {
-        const [configRes, memoryRes] = await Promise.all([
-          fetch('/api/config'),
-          fetch('/api/config?list=memory'),
-        ])
-        const config: AppConfig = await configRes.json()
-        setMaxTokens(config.provider?.maxTokens || 4096)
+        const memoryRes = await fetch('/api/config?list=memory')
         if (memoryRes.ok) {
           const data = await memoryRes.json()
           setMemoryFiles(data.files || [])
@@ -148,23 +138,6 @@ function AdvancedSection() {
     }
     load()
   }, [])
-
-  async function handleSaveTokens() {
-    setSaving(true)
-    setSaved(false)
-    try {
-      await fetch('/api/config', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ provider: { maxTokens } }),
-      })
-      setSaved(true)
-      setTimeout(() => setSaved(false), 2000)
-    } catch {
-      // ignore
-    }
-    setSaving(false)
-  }
 
   if (loading) {
     return (
@@ -191,25 +164,6 @@ function AdvancedSection() {
         </div>
       </div>
       <div className="p-5 space-y-4">
-        {/* Max tokens */}
-        <div className="flex items-center gap-4">
-          <div className="flex-1">
-            <p className="text-sm font-medium">Max Tokens</p>
-            <p className="text-xs text-muted-foreground">Maximum response length per message</p>
-          </div>
-          <div className="flex items-center gap-2">
-            <Input
-              type="number"
-              value={maxTokens}
-              onChange={(e) => setMaxTokens(Number(e.target.value))}
-              className="h-8 w-24 text-sm text-center"
-            />
-            <Button size="sm" variant="outline" onClick={handleSaveTokens} disabled={saving}>
-              {saving ? '...' : saved ? 'Done' : 'Save'}
-            </Button>
-          </div>
-        </div>
-
         {/* Memory files */}
         {memoryFiles.length > 0 && (
           <div>

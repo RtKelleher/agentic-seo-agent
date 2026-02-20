@@ -5,6 +5,11 @@ import { MessageBubble } from '@/components/chat/MessageBubble'
 import { StreamingMessage } from '@/components/chat/StreamingMessage'
 import type { ChatMessage, AgentStreamEvent, ToolCall, ToolResult } from '@/lib/types'
 
+function formatTokens(n: number): string {
+  if (n >= 1000) return `${(n / 1000).toFixed(1)}k`
+  return String(n)
+}
+
 interface ChatWindowProps {
   pendingMessage: string
   onPendingConsumed: () => void
@@ -17,8 +22,10 @@ export function ChatWindow({ pendingMessage, onPendingConsumed }: ChatWindowProp
   const [streamContent, setStreamContent] = useState('')
   const [streamToolCalls, setStreamToolCalls] = useState<ToolCall[]>([])
   const [streamToolResults, setStreamToolResults] = useState<ToolResult[]>([])
+  const [tokenUsage, setTokenUsage] = useState<{ promptTokens: number; completionTokens: number } | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
+  const abortRef = useRef<AbortController | null>(null)
 
   const scrollToBottom = useCallback(() => {
     if (scrollRef.current) {
@@ -38,6 +45,10 @@ export function ChatWindow({ pendingMessage, onPendingConsumed }: ChatWindowProp
     }
   }, [input])
 
+  const handleStop = useCallback(() => {
+    abortRef.current?.abort()
+  }, [])
+
   const sendMessage = useCallback(async (text: string) => {
     if (!text.trim() || isStreaming) return
 
@@ -54,12 +65,21 @@ export function ChatWindow({ pendingMessage, onPendingConsumed }: ChatWindowProp
     setStreamContent('')
     setStreamToolCalls([])
     setStreamToolResults([])
+    setTokenUsage(null)
+
+    const controller = new AbortController()
+    abortRef.current = controller
+
+    let accContent = ''
+    let accToolCalls: ToolCall[] = []
+    let accToolResults: ToolResult[] = []
 
     try {
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ message: text.trim() }),
+        signal: controller.signal,
       })
 
       if (!res.ok || !res.body) {
@@ -69,9 +89,6 @@ export function ChatWindow({ pendingMessage, onPendingConsumed }: ChatWindowProp
       const reader = res.body.getReader()
       const decoder = new TextDecoder()
       let buffer = ''
-      let accContent = ''
-      let accToolCalls: ToolCall[] = []
-      let accToolResults: ToolResult[] = []
 
       while (true) {
         const { done, value } = await reader.read()
@@ -103,11 +120,17 @@ export function ChatWindow({ pendingMessage, onPendingConsumed }: ChatWindowProp
                 accToolResults = [...accToolResults, event.result]
                 setStreamToolResults(accToolResults)
                 break
+              case 'usage':
+                setTokenUsage(event.usage)
+                break
               case 'error':
                 accContent += `\n\n**Error:** ${event.error}`
                 setStreamContent(accContent)
                 break
               case 'done':
+                if (event.usage) {
+                  setTokenUsage(event.usage)
+                }
                 break
             }
           } catch {
@@ -127,14 +150,30 @@ export function ChatWindow({ pendingMessage, onPendingConsumed }: ChatWindowProp
 
       setMessages((prev) => [...prev, assistantMessage])
     } catch (err) {
-      const errorMessage: ChatMessage = {
-        id: crypto.randomUUID(),
-        role: 'assistant',
-        content: `Something went wrong. ${err instanceof Error ? err.message : 'Please try again.'}`,
-        timestamp: Date.now(),
+      if (err instanceof DOMException && err.name === 'AbortError') {
+        // User clicked stop — finalize partial content as-is
+        if (accContent || accToolCalls.length > 0) {
+          const partialMessage: ChatMessage = {
+            id: crypto.randomUUID(),
+            role: 'assistant',
+            content: accContent,
+            toolCalls: accToolCalls.length > 0 ? accToolCalls : undefined,
+            toolResults: accToolResults.length > 0 ? accToolResults : undefined,
+            timestamp: Date.now(),
+          }
+          setMessages((prev) => [...prev, partialMessage])
+        }
+      } else {
+        const errorMessage: ChatMessage = {
+          id: crypto.randomUUID(),
+          role: 'assistant',
+          content: `Something went wrong. ${err instanceof Error ? err.message : 'Please try again.'}`,
+          timestamp: Date.now(),
+        }
+        setMessages((prev) => [...prev, errorMessage])
       }
-      setMessages((prev) => [...prev, errorMessage])
     } finally {
+      abortRef.current = null
       setIsStreaming(false)
       setStreamContent('')
       setStreamToolCalls([])
@@ -202,20 +241,43 @@ export function ChatWindow({ pendingMessage, onPendingConsumed }: ChatWindowProp
                 rows={1}
                 style={{ maxHeight: '160px' }}
               />
-              <button
-                type="submit"
-                disabled={isStreaming || !input.trim()}
-                className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground transition-all hover:bg-primary/90 disabled:opacity-30 disabled:hover:bg-primary"
-              >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M5 12h14M12 5l7 7-7 7" />
-                </svg>
-              </button>
+              {isStreaming ? (
+                <button
+                  type="button"
+                  onClick={handleStop}
+                  className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg bg-destructive text-destructive-foreground transition-all hover:bg-destructive/90"
+                  title="Stop generating"
+                >
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+                    <rect x="4" y="4" width="16" height="16" rx="2" />
+                  </svg>
+                </button>
+              ) : (
+                <button
+                  type="submit"
+                  disabled={!input.trim()}
+                  className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground transition-all hover:bg-primary/90 disabled:opacity-30 disabled:hover:bg-primary"
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M5 12h14M12 5l7 7-7 7" />
+                  </svg>
+                </button>
+              )}
             </div>
           </form>
-          <p className="mt-2 text-center text-[11px] text-muted-foreground/40">
-            Press Enter to send, Shift+Enter for new line
-          </p>
+          <div className="mt-2 flex items-center justify-center gap-3 text-[11px] text-muted-foreground/40">
+            <span>Press Enter to send, Shift+Enter for new line</span>
+            {tokenUsage && (tokenUsage.promptTokens > 0 || tokenUsage.completionTokens > 0) && (
+              <span className="flex items-center gap-1.5 text-muted-foreground/60">
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <circle cx="12" cy="12" r="10" />
+                  <path d="M12 6v6l4 2" />
+                </svg>
+                {formatTokens(tokenUsage.promptTokens + tokenUsage.completionTokens)} tokens
+                <span className="text-muted-foreground/40">({formatTokens(tokenUsage.promptTokens)} in + {formatTokens(tokenUsage.completionTokens)} out)</span>
+              </span>
+            )}
+          </div>
         </div>
       </div>
     </div>
