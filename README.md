@@ -19,6 +19,14 @@
 ---
 
 <p align="center">
+  <strong>🚀 Not technical enough to self-host?</strong><br />
+  Get early access to the fully hosted version — first 100 users get hands-on onboarding, direct feedback sessions, and help integrating with your custom CMS.<br />
+  <a href="https://myagenticseo.com/"><b>→ Join the early access at myagenticseo.com</b></a>
+</p>
+
+---
+
+<p align="center">
   <img src="docs/images/screenshot.png" alt="Agentic SEO — Chat interface with Quick Actions, model selector, and site profile" width="800" />
 </p>
 
